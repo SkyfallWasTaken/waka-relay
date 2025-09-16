@@ -79,11 +79,14 @@ client = httpx.AsyncClient(
 )
 
 
-def verify_key(authorization: str = Header()):
-    """Verifies the API key from the request header. (if required)
+def verify_key_and_get_project(authorization: str) -> Optional[str]:
+    """Verifies the API key and returns the associated project name if any.
 
     Args:
-        authorization (str, optional): _description_. Defaults to Header().
+        authorization (str): Authorization header value.
+
+    Returns:
+        Optional[str]: Project name if the API key is project-specific, None otherwise.
 
     Raises:
         HTTPException: Configuration not loaded.
@@ -97,7 +100,7 @@ def verify_key(authorization: str = Header()):
         raise HTTPException(status_code=500, detail="Configuration not loaded.")
 
     if CONFIG.get("require_api_key", False):
-        if not CONFIG.get("api_key"):
+        if not CONFIG.get("api_key") and not CONFIG.get("project_api_keys"):
             logging.error("API key is missing from the config.")
             raise HTTPException(
                 status_code=401, detail="API key is missing from the config."
@@ -115,10 +118,40 @@ def verify_key(authorization: str = Header()):
             logging.info("Invalid API key format.")
             raise HTTPException(status_code=401, detail="Invalid API key format.")
 
-        if not compare_digest(api_key, CONFIG.get("api_key", "")):
-            logging.info("Invalid API key.")
-            raise HTTPException(status_code=401, detail="Invalid API key.")
+        # Check if it's a project-specific API key first
+        project_api_keys = CONFIG.get("project_api_keys", {})
+        for project_name, project_key in project_api_keys.items():
+            if compare_digest(api_key, project_key):
+                return project_name
 
+        # Check if it's the global API key
+        global_api_key = CONFIG.get("api_key")
+        if global_api_key and compare_digest(api_key, global_api_key):
+            return None  # No specific project associated
+
+        # If we get here, the API key is invalid
+        logging.info("Invalid API key.")
+        raise HTTPException(status_code=401, detail="Invalid API key.")
+
+    return None  # No API key required
+
+
+from typing import Optional
+
+def verify_key(authorization: Optional[str] = Header(default=None)):
+    """Verifies the API key from the request header. (if required)
+
+    Args:
+        authorization (str, optional): _description_. Defaults to Header().
+
+    Raises:
+        HTTPException: Configuration not loaded.
+        HTTPException: API key is missing from the config.
+        HTTPException: API key is required.
+        HTTPException: Invalid API key format.
+        HTTPException: Invalid API key.
+    """
+    verify_key_and_get_project(authorization or "")
 
 @app.get("/")
 async def root():
@@ -142,10 +175,28 @@ async def catch_everything(request: Request, full_path: str):
 
     start_time = time.perf_counter()
 
+    # Get the project name associated with the API key (if any)
+    authorization = request.headers.get("authorization", "")
+    project_override = verify_key_and_get_project(authorization)
+
+    modified_body = None
     if is_heartbeat(request):
         incoming_body = await request.body()
         try:
             body_json = json.loads(incoming_body.decode("utf-8"))
+            
+            # Override project name if API key is project-specific
+            if project_override:
+                if isinstance(body_json, list):
+                    for item in body_json:
+                        if isinstance(item, dict):
+                            item["project"] = project_override
+                elif isinstance(body_json, dict):
+                    body_json["project"] = project_override
+                
+                # Store the modified body for later use
+                modified_body = json.dumps(body_json).encode("utf-8")
+            
             # check for common extension issues and set the warn flags
             issues = set()
             if isinstance(body_json, list):
@@ -196,6 +247,7 @@ async def catch_everything(request: Request, full_path: str):
         request=request,
         url=make_url(primary_instance[0], full_path),
         api_key=primary_instance[1],
+        modified_body=modified_body,
     )  # only wait for the primary response
 
     if secondary_instances:
@@ -207,6 +259,7 @@ async def catch_everything(request: Request, full_path: str):
                     url=make_url(instance[0], full_path),
                     api_key=instance[1],
                     expected_status_code=primary_response["status_code"],
+                    modified_body=modified_body,
                 )
             )
 
@@ -344,11 +397,16 @@ async def handle_single_request(
     url: str,
     api_key: str,
     expected_status_code: Optional[int] = None,
+    modified_body: Optional[bytes] = None,
 ) -> Dict[str, Any]:
     """Handles a single request to a WakaTime instance."""
 
     async with REQUEST_SEMAPHORE:
-        body = await request.body()
+        # Use pre-read body if provided, otherwise read from request
+        if modified_body is not None:
+            body = modified_body
+        else:
+            body = await request.body()
 
         headers = dict(request.headers)
         # i spent nearly 1 hour trying to figure out why auth was broken
@@ -365,7 +423,9 @@ async def handle_single_request(
 
         if is_heartbeat(request):
             try:
-                json_body = await request.json()
+                # Use the body we already have (either modified or original)
+                json_body = json.loads(body.decode("utf-8"))
+                
                 # patch the user agent in each heartbeat
                 for i, item in enumerate(json_body):
                     if isinstance(item, dict) and RELAY_SIGNATURE not in item.get(
@@ -523,6 +583,7 @@ def create_default_config() -> None:
                 "api_key": "",
                 "debug": False,
                 "instances": {"https://api.wakatime.com/api/v1": "API KEY HERE"},
+                "project_api_keys": {},
             }
         }
 

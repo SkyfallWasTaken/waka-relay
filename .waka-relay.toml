@@ -13,3 +13,7 @@ debug = false # Whether or not to enable debug logging
 [relay.instances] # List of instances to relay to (first entry is the primary instance)
 "https://api.wakatime.com/api/v1" = "WAKATIME API KEY"
 "https://hackatime.hackclub.com/api/hackatime/v1" = "HACKATIME API KEY"
+
+[relay.project_api_keys] # Optional: API keys specific to project names
+# "my-secret-project" = "project-specific-api-key-123"
+# "work-project" = "work-api-key-456"
