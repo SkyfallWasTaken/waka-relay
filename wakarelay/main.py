@@ -97,7 +97,7 @@ def verify_key(authorization: str = Header()):
         raise HTTPException(status_code=500, detail="Configuration not loaded.")
 
     if CONFIG.get("require_api_key", False):
-        if not CONFIG.get("api_key"):
+        if not CONFIG.get("api_key") and not CONFIG.get("project_api_keys"):
             logging.error("API key is missing from the config.")
             raise HTTPException(
                 status_code=401, detail="API key is missing from the config."
@@ -115,7 +115,15 @@ def verify_key(authorization: str = Header()):
             logging.info("Invalid API key format.")
             raise HTTPException(status_code=401, detail="Invalid API key format.")
 
-        if not compare_digest(api_key, CONFIG.get("api_key", "")):
+        valid_api_keys = []
+        if CONFIG.get("api_key"):
+            valid_api_keys.append(CONFIG.get("api_key"))
+        
+        project_api_keys = CONFIG.get("project_api_keys", {})
+        if project_api_keys:
+            valid_api_keys.extend(project_api_keys.values())
+
+        if not any(compare_digest(api_key, valid_key) for valid_key in valid_api_keys):
             logging.info("Invalid API key.")
             raise HTTPException(status_code=401, detail="Invalid API key.")
 
@@ -523,6 +531,7 @@ def create_default_config() -> None:
                 "api_key": "",
                 "debug": False,
                 "instances": {"https://api.wakatime.com/api/v1": "API KEY HERE"},
+                "project_api_keys": {},
             }
         }
 
