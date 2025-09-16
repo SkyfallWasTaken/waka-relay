@@ -182,7 +182,20 @@ For a full config example with an explanation check out the [example config file
 |`time_text`|`"%TEXT% (Relayed)"`|Text to display in the IDE (%TEXT% is replaced by what the api retuns)|
 |`require_api_key`|`false`|Whether or not to require an API key|
 |`api_key`|`""`|The API key to use if `require_api_key` is true|
+|`project_api_keys`|`{}`|Optional project-specific API keys (see example below)|
 |`debug`|`false`|Whether or not to enable debug logging|
+
+### Project-specific API keys
+
+You can configure different API keys for different projects by adding a `project_api_keys` section:
+
+```toml
+[relay.project_api_keys]
+"my-secret-project" = "project-specific-api-key-123"
+"work-project" = "work-api-key-456"
+```
+
+This allows different projects to authenticate with their own unique API keys, while still supporting the global `api_key` as a fallback.
 
 ## Known compatible backends
 
