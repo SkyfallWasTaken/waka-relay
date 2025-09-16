@@ -136,7 +136,9 @@ def verify_key_and_get_project(authorization: str) -> Optional[str]:
     return None  # No API key required
 
 
-def verify_key(authorization: str = Header()):
+from typing import Optional
+
+def verify_key(authorization: Optional[str] = Header(default=None)):
     """Verifies the API key from the request header. (if required)
 
     Args:
@@ -149,8 +151,7 @@ def verify_key(authorization: str = Header()):
         HTTPException: Invalid API key format.
         HTTPException: Invalid API key.
     """
-    verify_key_and_get_project(authorization)
-
+    verify_key_and_get_project(authorization or "")
 
 @app.get("/")
 async def root():
